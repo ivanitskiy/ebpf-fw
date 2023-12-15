@@ -18,7 +18,6 @@ struct Opt {
     source_ips: Option<Vec<Ipv4Addr>>,
     #[clap(short, long)]
     port: Option<u16>,
-
 }
 
 #[tokio::main]
@@ -65,14 +64,14 @@ async fn main() -> Result<(), anyhow::Error> {
 
     if let Some(port) = opt.port {
         let mut ips: [u32; 4] = [0; 4];
-        if let Some(source_ips) = opt.source_ips{
+        if let Some(source_ips) = opt.source_ips {
             for (index, &ip) in source_ips.iter().take(4).enumerate() {
                 ips[index] = u32::from(ip);
             }
         }
         let backend_ports = BackendPorts { ips };
         backends.insert(port, backend_ports, 0)?;
-        info!("{:#?}", backend_ports );
+        info!("{:#?}", backend_ports);
     }
 
     info!("Waiting for Ctrl-C...");

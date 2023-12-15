@@ -43,6 +43,7 @@ fn ptr_at<T>(ctx: &XdpContext, offset: usize) -> Option<*const T> {
 }
 
 #[inline(always)]
+#[allow(unused)]
 fn ptr_at_mut<T>(ctx: &XdpContext, offset: usize) -> Option<*mut T> {
     let ptr = ptr_at::<T>(ctx, offset)?;
     Some(ptr as *mut T)
@@ -61,68 +62,44 @@ fn try_myapp(ctx: XdpContext) -> Result<u32, u32> {
         _ => return Ok(xdp_action::XDP_PASS),
     }
 
-    let ipv4hdr: *const Ipv4Hdr = unsafe { ptr_at(&ctx, EthHdr::LEN).ok_or(xdp_action::XDP_PASS)? };
-    let source_addr = u32::from_be(unsafe { *ipv4hdr }.src_addr);
+    let ipv4hdr: *const Ipv4Hdr = ptr_at(&ctx, EthHdr::LEN).ok_or(xdp_action::XDP_PASS)?;
+    let ipv4hdr = unsafe { *ipv4hdr };
+    let source_addr = u32::from_be(ipv4hdr.src_addr);
 
-    let dst_addr = u32::from_be(unsafe { *ipv4hdr }.dst_addr);
+    let dst_addr = u32::from_be(ipv4hdr.dst_addr);
 
-    let (proto, source_port, dst_port) = match unsafe { *ipv4hdr }.proto {
+    let (source_port, dst_port) = match ipv4hdr.proto {
         IpProto::Tcp => {
             let tcphdr: *const TcpHdr =
-                unsafe { ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN) }.ok_or(xdp_action::XDP_PASS)?;
-            (
-                "TCP",
-                u16::from_be(unsafe { *tcphdr }.source),
-                u16::from_be(unsafe { *tcphdr }.dest),
-            )
+                ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN).ok_or(xdp_action::XDP_PASS)?;
+            let tcphdr = unsafe { *tcphdr };
+            (u16::from_be(tcphdr.source), u16::from_be(tcphdr.dest))
         }
         IpProto::Udp => {
             let udphdr: *const UdpHdr =
-                unsafe { ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN) }.ok_or(xdp_action::XDP_PASS)?;
-            (
-                "UDP",
-                u16::from_be(unsafe { *udphdr }.source),
-                u16::from_be(unsafe { *udphdr }.dest),
-            )
+                ptr_at(&ctx, EthHdr::LEN + Ipv4Hdr::LEN).ok_or(xdp_action::XDP_PASS)?;
+            let udphdr = unsafe { *udphdr };
+            (u16::from_be(udphdr.source), u16::from_be(udphdr.dest))
         }
         _ => return Ok(0),
     };
 
-    let proto = WrappedIpProto(unsafe { *ipv4hdr }.proto);
-
-    let blocked  = match unsafe { BACKEND_PORTS.get(&dst_port) } {
-        Some(v) => {
-            // info!(&ctx, "found  key");
-            if v.ips.iter().any(|&x| x == source_addr ) {
-                info!(&ctx, "source addr should be blocked");
-                return Ok(xdp_action::XDP_DROP);
-            }
-            v
+    if let Some(v) = unsafe { BACKEND_PORTS.get(&dst_port) } {
+        if v.ips.iter().any(|&x| x == source_addr) {
+            info!(&ctx, "source addr should be blocked");
+            return Ok(xdp_action::XDP_DROP);
         }
-        None => {
-            info!(&ctx, "no dest port in map. xdp_pass");
-            return Ok(xdp_action::XDP_PASS);
-        }
-    };
-
-
+    }
+    let proto = WrappedIpProto(ipv4hdr.proto);
     info!(
         &ctx,
-        "{} {}.{}.{}.{}:{} -> IPv4: {}.{}.{}.{}:{}  IPs:",
+        "ingress: {} {:i}:{} {:i}:{} not matching FW rule",
         proto.as_str(),
-        ((source_addr >> 24) & 0xFF) as u8,
-        ((source_addr >> 16) & 0xFF) as u8,
-        ((source_addr >> 8) & 0xFF) as u8,
-        (source_addr & 0xFF) as u8,
+        source_addr,
         source_port,
-        ((dst_addr >> 24) & 0xFF) as u8,
-        ((dst_addr >> 16) & 0xFF) as u8,
-        ((dst_addr >> 8) & 0xFF) as u8,
-        (dst_addr & 0xFF) as u8,
-        dst_port,
-        blocked.ips
+        dst_addr,
+        dst_port
     );
-
     Ok(xdp_action::XDP_PASS)
 }
 
